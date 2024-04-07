@@ -87,12 +87,14 @@ xb, yb = get_batch("train")
 
 class BigramLanguageModel(nn.Module): # Klasse BigramLanguageModel, welche aus nn.Module erbt
 
+    # nn.Embedding: Erstellung Embeddingmatrix vocab_size*vocab_size
     def __init__(self, vocab_size): # vocab_size: Menge der einzigartigen Zeichen/Buchstaben/Zahlen in txt
         super().__init__() # super(): Aufruf der init Methode aus der parent class nn.Module
-        self.token_embedding_table = nn.Embedding(vocab_size, vocab_size) # nn.Embedding: Erstellung Embeddingmatrix vocab_size*vocab_size
+        self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
 
+    # logits: Input x wird übergeben & verweist auf die zu Tokens gehörenden Zeilen aus der Embeddingmatrix
     def forward(self, idx, targets):
-        logits = self.token_embedding_table(idx) # Input x wird übergeben & verweist auf die zu Tokens gehörenden Zeilen aus der Embeddingmatrix
+        logits = self.token_embedding_table(idx)
         return logits # für Eingabetext relevante Zeilen aus Embeddingmatrix werden zurückgegeben
 
 m = BigramLanguageModel(vocab_size)
