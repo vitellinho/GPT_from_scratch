@@ -6,7 +6,7 @@ from torch.nn import functional as F
 batch_size = 64 # Wie viele data_chunks werden parallel verarbeitet?
 block_size = 256 # Wie viele vorhergehende Token werden für die Vorhersage des nächsten Tokens verwendet?
 max_iters = 5000 # max. Anzahl an Trainings-Iterationen
-eval_interval = 500 # Intervall (zu max_iters), zu dem das Modell trainiert wird
+eval_interval = 500 # Intervall (zu max_iters), zu dem das Modell evaluiert wird
 learning_rate = 3e-4 # bestimmt die Größe der Schritte, die der optimizer während des Trainings unternimmt
 device = 'cuda' if torch.cuda.is_available() else 'cpu' # soll mit GPU ('cuda') oder CPU ('cpu') trainiert werden?
 eval_iters = 200 # ähnlich wie eval_interval, jedoch spezifiziert eval_iters eine feste Anzahl von Iterationen
@@ -66,19 +66,24 @@ def get_batch(split):
     x, y = x.to(device), y.to(device) # Übergabe von x und y auf entsprechende Hardware (GPT/CPU)
     return x, y # x (Eingabedaten) und y (Zieldaten, auch Label genannt) werden durch Funktion als Batch zurückgegeben
 
-@torch.no_grad() # ?
+# estimate_loss: Funktion, die den Mittelwert der Verluste aus n Trainingsiterationen berechnet
+@torch.no_grad() # @: Decorator, der verhindert, dass Gradienten berechnet werden, nützlich für die Auswertung
 def estimate_loss():
-    out = {}
-    model.eval()
-    for split in ['train', 'val']:
-        losses = torch.zeros(eval_iters)
-        for k in range(eval_iters):
-            X, Y = get_batch(split)
-            logits, loss = model(X, Y)
-            losses[k] = loss.item()
-        out[split] = losses.mean()
-    model.train()
-    return out
+    out = {} # Leeres Dictionary, um die Verluste zu speichern
+    model.eval() # setzt das Modell in den Evaluierungsmodus, zB. werden dadurch Dropout Schichten deaktiviert
+
+    for split in ['train', 'val']: # Schleife, um über Trainings- und Validierungsdaten zu iterieren
+        losses = torch.zeros(eval_iters) # Erstellt einen Tensor als Platzhalter für die Verluste in jeder Iteration
+        for k in range(eval_iters): # Schleife, um eval_iters-mal über die Daten zu iterieren und Losses zu berechnen
+            X, Y = get_batch(split) # in jeder Iteration wird zufälliger Batch (X, Y) abgerufen
+            logits, loss = model(X, Y) # Berechnung loss anhand Gegenüberstellung logits/Y anhand Eingabe X
+            losses[k] = loss.item() # berechneter loss wird der Liste losses hinzugefügt
+        out[split] = losses.mean() # nach den Iterationen wird der Mittelwert aller Losses für Datensatz X berechnet
+    model.train() # Nach Abschluss Evaluierung wird model von Evaluierungs- zurück in den Trainingsmodus versetzt
+    return out # Mittelwert der losses werden als dictionary out zurückgegeben
+
+
+## Self-Attention Blocks ##
 
 class Head(nn.Module): # ?
     """ one head of self-attention """
@@ -156,21 +161,21 @@ class Block(nn.Module): # ?
 
 ## Neural Network: Bigram Language Model (GPT) ##
 
-class GPTLanguageModel(nn.Module): # /?
+class GPTLanguageModel(nn.Module):
 
     # nn.Embedding: Erstellung Embeddingmatrix vocab_size*vocab_size
     def __init__(self):
         super().__init__() # super(): Aufruf der init Methode aus der parent class nn.Module
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd) # vocab_size: Menge einzigartige Zeichen in txt
-        self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)])
-        self.ln_f = nn.LayerNorm(n_embd) # final layer norm
-        self.lm_head = nn.Linear(n_embd, vocab_size)
+        self.position_embedding_table = nn.Embedding(block_size, n_embd) # ?
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)]) # ?
+        self.ln_f = nn.LayerNorm(n_embd) # final layer norm # ?
+        self.lm_head = nn.Linear(n_embd, vocab_size) # ?
 
         # better init, not covered in the original GPT video, but important, will cover in followup video
         self.apply(self._init_weights)
 
-    def _init_weights(self, module):
+    def _init_weights(self, module): # ?
         if isinstance(module, nn.Linear):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             if module.bias is not None:
@@ -180,7 +185,7 @@ class GPTLanguageModel(nn.Module): # /?
 
     # logits: Input wird übergeben & verweist auf Zeilen aus Emb.matrix, aus diesen Zeilen wird logits-Matrix erstellt
     def forward(self, idx, targets=None): # targets = None: so bleibt targets optional
-        B, T = idx.shape
+        B, T = idx.shape # ?
 
         # ?
         # idx and targets are both (B,T) tensor of integers
@@ -204,9 +209,9 @@ class GPTLanguageModel(nn.Module): # /?
         return logits, loss # für Eingabetext relevante Zeilen aus Embeddingmatrix & loss werden zurückgegeben
 
     # Funktion des Modells: Generierung weiterer strings basierend auf input (idx)
-    def generate(self, idx, max_new_tokens): # max_new_tokens: max. Anzahl an zu generierenden strings
-        for _ in range(max_new_tokens):
-            idx_cond = idx[:, -block_size:] # idx auf die letzten block_size-Token zuschneiden
+    def generate(self, idx, max_new_tokens):
+        for _ in range(max_new_tokens): # max_new_tokens: max. Anzahl an zu generierenden strings
+            idx_cond = idx[:, -block_size:] # ?
             logits, loss = self(idx_cond) # erhalten der predictions (logits) & loss zum gegebenen Input
             logits = logits[:, -1, :] # Fokus wird auf letzten Token gesetzt da auf diesen nächster Token generiert wird
             probs = F.softmax(logits, dim=-1) # softmax: erzeugt durch Vorhersage die Wahrscheinlichkeit für next-Token
@@ -235,10 +240,10 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 # Trainingsschleife
 for iter in range(max_iters):
 
-    # ?
+    # Evaluierung des Modells soll alle eval_intervall und bei der letzten Iteration durchgeführt werden
     if iter % eval_interval == 0 or iter == max_iters - 1:
-        losses = estimate_loss()
-        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        losses = estimate_loss() # estimate_loss: Funktion welche Loss-Mittelwert aus n Trainingsiterationen berechnet
+        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}") # print Loss Mittelwerte
 
     xb, yb = get_batch('train') # Generierung eines neuen zufälligen batches (bestehend aus xb/yb) aus den trainingsdata
 
@@ -247,7 +252,7 @@ for iter in range(max_iters):
     loss.backward()  # Berechnung der Gradienten, sprich die Änderungen des Loss-Werts bei Änderung der Parameter
     optimizer.step()  # Optimierung der Parameter basierend auf dem berechneten Gradienten
 
-# print der vom Modell decodeten und generierten strings basierend auf input, diesmal nach dem Training + context
-context = torch.zeros((1, 1), dtype=torch.long, device=device) # ?
+# print der vom Modell decodeten und generierten strings basierend auf input, diesmal nach dem Training
+context = torch.zeros((1, 1), dtype=torch.long, device=device) # Erstellung eines Basis-Tensors bestehend aus Nullen
 print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
 #open('more.txt', 'w').write(decode(m.generate(context, max_new_tokens=10000)[0].tolist()))
