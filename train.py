@@ -54,7 +54,7 @@ train_data[:block_size+1]
 #    print(f"when input is {context} the target: {target}")
 
 # Neben der Dimension 'data-chunks', muss auch die 2. Dimension 'data-batches' (ein batch aus chunks) definiert werden
-torch.manual_seed(1337) # wird festgelegt, damit torch.randint später nicht immer zufällige verschiedene Werte generiert ## kann gelöscht werden ?!
+torch.manual_seed(1337) # wird festgelegt, damit torch.randint später nicht immer zufällige verschiedene Werte generiert
 batch_size = 4 # Die maximale Anzahl an data-chunks in einem data-batch
 
 # Erstellung Batch
