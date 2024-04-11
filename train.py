@@ -3,12 +3,12 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 # hyperparameters
-batch_size = 64 # Wie viele data_chunks werden parallel verarbeitet?
-block_size = 256 # Wie viele vorhergehende Token werden für die Vorhersage des nächsten Tokens verwendet?
+batch_size = 64 # Wie viele data_chunks werden parallel verarbeitet
+block_size = 256 # Wie viele vorhergehende Token werden für die Vorhersage des nächsten Tokens verwendet
 max_iters = 5000 # max. Anzahl an Trainings-Iterationen
 eval_interval = 500 # Intervall (zu max_iters), zu dem das Modell evaluiert wird
 learning_rate = 3e-4 # bestimmt die Größe der Schritte, die der optimizer während des Trainings unternimmt
-device = 'cuda' if torch.cuda.is_available() else 'cpu' # soll mit GPU ('cuda') oder CPU ('cpu') trainiert werden?
+device = 'cuda' if torch.cuda.is_available() else 'cpu' # soll mit GPU ('cuda') oder CPU ('cpu') trainiert werden
 eval_iters = 200 # ähnlich wie eval_interval, jedoch spezifiziert eval_iters eine feste Anzahl von Iterationen
 n_embd = 384 # Größe der Einbettungsdimensionen im Modell
 n_head = 6 # Anzahl der Heads für Klasse "Block"
@@ -83,83 +83,87 @@ def estimate_loss():
     return out # Mittelwert der losses werden als dictionary out zurückgegeben
 
 
-## Self-Attention Blocks ##
+## Self-Attention-Mechanism ##
 
-class Head(nn.Module): # ?
+# Einzelner Self-Attention Head
+class Head(nn.Module):
     """ one head of self-attention """
 
-    def __init__(self, head_size):
+    def __init__(self, head_size): # head_size: Größe der Ausgabe eines einzelnen Attention Heads
         super().__init__()
-        self.key = nn.Linear(n_embd, head_size, bias=False)
-        self.query = nn.Linear(n_embd, head_size, bias=False)
-        self.value = nn.Linear(n_embd, head_size, bias=False)
-        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+        self.key = nn.Linear(n_embd, head_size, bias=False) # Eingabe (x) in Schlüssel (key) umgewandelt / projiziert
+        self.query = nn.Linear(n_embd, head_size, bias=False) # Eingabe (x) in Abfragen (query) umgewandelt / projiziert
+        self.value = nn.Linear(n_embd, head_size, bias=False) # Eingabe (x) in Werte (value) umgewandelt / projiziert
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size))) # Erstellung Dreiecksmatrix aus 1en
 
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout) # Drop-Out Schicht um Overfitting zu reduzieren
 
+    # Tatsächlicher Self-Attention Mechanism
     def forward(self, x):
-        # input of size (batch, time-step, channels)
-        # output of size (batch, time-step, head size)
-        B,T,C = x.shape
-        k = self.key(x)   # (B,T,hs)
-        q = self.query(x) # (B,T,hs)
-        # compute attention scores ("affinities")
-        wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # (B, T, hs) @ (B, hs, T) -> (B, T, T)
-        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
-        wei = F.softmax(wei, dim=-1) # (B, T, T)
-        wei = self.dropout(wei)
-        # perform the weighted aggregation of the values
-        v = self.value(x) # (B,T,hs)
-        out = wei @ v # (B, T, T) @ (B, T, hs) -> (B, T, hs)
-        return out
+        B,T,C = x.shape # Abfrage Dimensionen der Eingabe x
+        k = self.key(x)   # Durch x wird key erzeugt
+        q = self.query(x) # Durch x wird query erzeugt
 
-class MultiHeadAttention(nn.Module): # ?
+        wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # Berechnung Attention-Matrix
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # Einbindung Dreiecksmatrix in Attention-Matrix
+        wei = F.softmax(wei, dim=-1) # Normalisierung der Attention-Matrix durch softmax
+        wei = self.dropout(wei) # Dropout zur Reduzierung Overfitting
+
+        v = self.value(x) # Durch x wird value erzeugt
+        out = wei @ v # Multiplikation der Attention-Matrix und values
+        return out # Output Durchschnitt der Wertrepräsentationen, welcher Ausgabe der Attention-Einheit darstellt
+
+# Implementierung mehrerer Self-Attention Heads zur parallelen Ausführung
+class MultiHeadAttention(nn.Module):
     """ multiple heads of self-attention in parallel """
 
-    def __init__(self, num_heads, head_size):
+    def __init__(self, num_heads, head_size): # num_heads: parallele Anzahl Heads / head_size: Größe Heads
         super().__init__()
-        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
-        self.proj = nn.Linear(head_size * num_heads, n_embd)
-        self.dropout = nn.Dropout(dropout)
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)]) # Erstellung Liste mit Heads
+        self.proj = nn.Linear(head_size * num_heads, n_embd) # Rückumwandlung Ausgaben der Heads in ursprüngliche Dimen.
+        self.dropout = nn.Dropout(dropout) # Drop-Out zur Minderung Overfitting
 
-    def forward(self, x):
-        out = torch.cat([h(x) for h in self.heads], dim=-1)
-        out = self.dropout(self.proj(out))
-        return out
+    # Tatsächlicher Multi-Head-Attention Mechanism
+    def forward(self, x): # x wird durch jeden Head verarbeitet und gibt output raus
+        out = torch.cat([h(x) for h in self.heads], dim=-1) # torch.cat: alle zusammengeführte outputs werden verbunden
+        out = self.dropout(self.proj(out)) # Drop-Out zur Minderung Overfitting
+        return out # Output in Form eines Tensors, welche kontextualisierte Darstellung wieder gibt
 
-class FeedFoward(nn.Module): # ?
+# Multi-Layer Perzeptron zur durchführung einer nichtlinearen Transformation
+class FeedFoward(nn.Module):
     """ a simple linear layer followed by a non-linearity """
 
     def __init__(self, n_embd):
         super().__init__()
-        self.net = nn.Sequential(
+        self.net = nn.Sequential(               # Initialisierung des Multi-Layer Perzeptron (neuronales Netz)
             nn.Linear(n_embd, 4 * n_embd),
             nn.ReLU(),
             nn.Linear(4 * n_embd, n_embd),
             nn.Dropout(dropout),
         )
 
-    def forward(self, x):
-        return self.net(x)
+    def forward(self, x): # Verarbeitung der Eingabe x durch das neuronale Netz
+        return self.net(x) # Output des nn wird zurück gegeben
 
-class Block(nn.Module): # ?
+# Zusammenfügung der Komponenten MultiHeadAttention und FeedFoward in einem Transformerblock
+class Block(nn.Module):
     """" Transformer block: communication followed by computation """
 
     def __init__(self, n_embd, n_head):
         super().__init__()
-        head_size = n_embd // n_head
-        self.sa = MultiHeadAttention(n_head, head_size)
-        self.ffwd = FeedFoward(n_embd)
-        self.ln1 = nn.LayerNorm(n_embd)
-        self.ln2 = nn.LayerNorm(n_embd)
+        head_size = n_embd // n_head # Definition des head_size
+        self.sa = MultiHeadAttention(n_head, head_size) # Initialisierung Aufmerksamkeitskomponente (MultiHeadAttention)
+        self.ffwd = FeedFoward(n_embd) # Feed-Forward
+        self.ln1 = nn.LayerNorm(n_embd) # Instanz zur Layer Normalisierung
+        self.ln2 = nn.LayerNorm(n_embd) # Instanz zur Layer Normalisierung
 
     def forward(self, x):
-        x = x + self.sa(self.ln1(x))
-        x = x + self.ffwd(self.ln2(x))
-        return x
+        x = x + self.sa(self.ln1(x)) # Aufmerksamkeitskomponente wird auf x angewendet und mit x addiert + normalisiert
+        x = x + self.ffwd(self.ln2(x)) # FeedForward wird auf x angewendet und mit x addiert + normalisiert
+        return x # verarbeitetes x wird wieder ausgegeben
 
 
-## Neural Network: Bigram Language Model (GPT) ##
+## GPT (decoder-only und ohne cross-attention) ##
 
 class GPTLanguageModel(nn.Module):
 
@@ -167,33 +171,32 @@ class GPTLanguageModel(nn.Module):
     def __init__(self):
         super().__init__() # super(): Aufruf der init Methode aus der parent class nn.Module
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd) # vocab_size: Menge einzigartige Zeichen in txt
-        self.position_embedding_table = nn.Embedding(block_size, n_embd) # ?
-        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)]) # ?
-        self.ln_f = nn.LayerNorm(n_embd) # final layer norm # ?
-        self.lm_head = nn.Linear(n_embd, vocab_size) # ?
+        self.position_embedding_table = nn.Embedding(block_size, n_embd) # Position jedes einzelnen Tokens
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)]) # Initial. Attention-Blocks
+        self.ln_f = nn.LayerNorm(n_embd) # Normalisierungsschicht
+        self.lm_head = nn.Linear(n_embd, vocab_size) # Transformationsschicht
 
-        # better init, not covered in the original GPT video, but important, will cover in followup video
-        self.apply(self._init_weights)
+        self.apply(self._init_weights) # Erste Initialisierung Gewichte
 
-    def _init_weights(self, module): # ?
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+    # Initalisierungsmethode für Gewichte der Schichten der Transformation (nn.Linear) und Einbettung (nn.Embedding)
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear): # Prüfung, ob Transformationsschicht vorliegt
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02) # Initalisierung Gewichte von nn.Linear
+            if module.bias is not None: # überprüft, ob module ein bias (Verschiebung) hat
+                torch.nn.init.zeros_(module.bias) # Initialisiert die Verschiebung (Bias) des Moduls mit Nullen.
+        elif isinstance(module, nn.Embedding): # Prüfung, ob Einbettungsschicht vorliegt
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02) # # Initalisierung Gewichte von nn.Embedding
 
     # logits: Input wird übergeben & verweist auf Zeilen aus Emb.matrix, aus diesen Zeilen wird logits-Matrix erstellt
     def forward(self, idx, targets=None): # targets = None: so bleibt targets optional
-        B, T = idx.shape # ?
+        B, T = idx.shape # Abfrage Dimensionen der Eingabe idx
 
-        # ?
-        # idx and targets are both (B,T) tensor of integers
-        tok_emb = self.token_embedding_table(idx) # (B,T,C)
-        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,C)
-        x = tok_emb + pos_emb # (B,T,C)
-        x = self.blocks(x) # (B,T,C)
-        x = self.ln_f(x) # (B,T,C)
+        # idx und targets sind beide (B,T) tensors aus integers
+        tok_emb = self.token_embedding_table(idx) # einzigartige Tokens werden in Vektor umgewandelt
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # Token Position in einem Vektor
+        x = tok_emb + pos_emb # Addition der Vektoren tok_emb und pos_emb
+        x = self.blocks(x) # weitere Verarbeitung der eingaben
+        x = self.ln_f(x) # Schicht um eingaben zu Normalisieren
         logits = self.lm_head(x) # (B,T,vocab_size)
 
         # loss soll nur berechnet werden, wenn auch targets übergeben werden
@@ -211,7 +214,7 @@ class GPTLanguageModel(nn.Module):
     # Funktion des Modells: Generierung weiterer strings basierend auf input (idx)
     def generate(self, idx, max_new_tokens):
         for _ in range(max_new_tokens): # max_new_tokens: max. Anzahl an zu generierenden strings
-            idx_cond = idx[:, -block_size:] # ?
+            idx_cond = idx[:, -block_size:] # trimmen von idx zu den letzten block_size tokens
             logits, loss = self(idx_cond) # erhalten der predictions (logits) & loss zum gegebenen Input
             logits = logits[:, -1, :] # Fokus wird auf letzten Token gesetzt da auf diesen nächster Token generiert wird
             probs = F.softmax(logits, dim=-1) # softmax: erzeugt durch Vorhersage die Wahrscheinlichkeit für next-Token
